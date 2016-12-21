@@ -1,0 +1,2 @@
+git+https://github.com/feth/peinard.git
+telepot==10.3
