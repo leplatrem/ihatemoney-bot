@@ -1,7 +1,9 @@
 # coding: UTF-8
-import sys
 import asyncio
-from collections import defaultdict
+import datetime
+import json
+import re
+import sys
 from decimal import Decimal
 
 import peinard
@@ -11,37 +13,65 @@ from telepot.aio.delegate import per_chat_id, create_open, pave_event_space
 
 class Store(object):
     def __init__(self):
-        self.accounts = defaultdict(defaultdict(0))
+        self.accounts = {}
 
     def save(self):
         with open("accounts.json", "w") as f:
-            json.write(f, self.accounts)
+            json.dump(self.accounts, f)
 
     def load(self):
         try:
             with open("accounts.json") as f:
-                imported = json.load(f)
-            self.accounts.update(imported)
-        except IOError:
+                self.accounts = json.load(f)
+        except IOError as e:
             pass
 
-    def track(self, gid, uid, amount):
-        group_accounts = self.accounts[gid]
-        group_accounts.setdefault(uid, 0)
-        nb_others = len(group_accounts) - 1
-        for user in group_accounts.keys():
-            if user == uid:
-                self.accounts[gid][user] += amount
-            else:
-                self.accounts[gid][user] -= (amount / nb_others)
+    def fetch(self, gid, uid):
+        return [bill for bill in self.accounts.get(gid, [])
+                if bill['uid'] == uid]
+
+    def track(self, gid, uid, amount, description):
+        today = datetime.date.today().isoformat()
+        bill = dict(uid=uid, amount=amount, description=description, date=today)
+        self.accounts.setdefault(gid, []).append(bill)
 
     def resolve(self, gid):
-        if len(self.accounts[gid]) == 1:
+        balance = {}
+        for bill in self.accounts.get(gid, []):
+            balance[bill['uid']] = 0
+        participants = list(balance.keys())
+
+        if len(participants) == 0:
             return []
-        return peinard.heuristic(self.accounts[gid])
+
+        if len(participants) == 1:
+            total = 0
+            for bill in self.accounts[gid]:
+                total += bill['amount']
+            return [('World', participants[0], total)]
+
+        nb_others = len(participants) - 1
+        for bill in self.accounts[gid]:
+            lend = Decimal(bill['amount'])
+            debt = lend / nb_others
+            for participant in balance.keys():
+                if participant == bill['uid']:
+                    balance[participant] += lend
+                else:
+                    balance[participant] -= debt
+        return peinard.heuristic(balance)
+
+    def clear(self, gid):
+        self.accounts[gid] = []
 
 
 class Accounter(telepot.aio.helper.ChatHandler):
+
+    fetch_bills_regex = re.compile(r"^@\w+$")  # /ihm @leplatrem
+    track_bill_regex = re.compile(r"^(\d+)\s+(\w+)$")  # /ihm 35 t-shit kidz
+    total_regex = re.compile(r"^total$")  # /ihm total
+    reset_regex = re.compile(r"^reset$")  # /ihm reset
+
     def __init__(self, seed_tuple, store, **kwargs):
         super(Accounter, self).__init__(seed_tuple, **kwargs)
         self.store = store
@@ -49,26 +79,68 @@ class Accounter(telepot.aio.helper.ChatHandler):
     async def on_chat_message(self, msg):
         content_type, chat_type, chat_id = telepot.glance(msg)
         if content_type != 'text':
-            # Not a text message.
             return
 
         uid = msg['from']['username']
-        gid = msg['chat']['id']
+        gid = str(msg['chat']['id'])
+        cmd = msg['text'].split(' ', 1)
+        parameters = cmd[1] if len(cmd) > 1 else ''
+        parameters = parameters.strip()
 
-        try:
-            cmd, value, thing = msg['text'].split(' ', 2)
-            amount = Decimal(value.strip())
-        except:
-            message = "Usage: /s 43 cheese"
-            await self.sender.sendMessage(message)
+        if cmd[0].strip() != "/ihm":
             return
 
-        self.store.track(gid, uid, amount)
+        print(gid, uid, parameters)
 
-        result = self.store.resolve(gid)
-        for transaction in result:
-            message = "{} → {}: {}".format(*transaction)
+        if self.fetch_bills_regex.match(parameters):
+            await self.fetch_bills(gid, parameters[1:])
+
+        elif self.track_bill_regex.match(parameters):
+            content = self.track_bill_regex.search(parameters)
+            amount, description = content.groups()
+            await self.track_bill(gid, uid, int(amount), description)
+
+        elif self.total_regex.match(parameters):
+            await self.total(gid)
+
+        elif self.reset_regex.match(parameters):
+            await self.clear(gid)
+
+        else:
+            message = ("😳?\n"
+                       "• /ihm 42 cheese: track bill\n"
+                       "• /ihm @username: fetch someone's bills\n"
+                       "• /ihm total: current debts\n"
+                       "• /ihm reset: clear bills\n")
             await self.sender.sendMessage(message)
+
+    async def fetch_bills(self, gid, uid):
+        bills = self.store.fetch(gid, uid)
+        if len(bills) == 0:
+            await self.sender.sendMessage("No bills found for {} 😕".format(uid))
+            return
+
+        message = "\n".join(["• {date}: {amount} ({description})".format(**bill)
+                             for bill in bills])
+        await self.sender.sendMessage(message)
+
+    async def track_bill(self, gid, uid, amount, description):
+        self.store.track(gid, uid, amount, description)
+        self.store.save()
+        await self.total(gid)
+
+    async def total(self, gid):
+        result = self.store.resolve(gid)
+        message = "\n".join([" • {} → {}: {}".format(*transaction)
+                             for transaction in result])
+        await self.sender.sendMessage("🤑\n" + message)
+
+    async def clear(self, gid):
+        await self.total(gid)
+        self.store.clear(gid)
+        self.store.save()
+        await self.sender.sendMessage("Bills cleared 👌")
+
 
 
 TOKEN = sys.argv[1]  # get token from command-line
@@ -85,5 +157,3 @@ loop.create_task(bot.message_loop())
 print('Listening ...')
 
 loop.run_forever()
-
-store.save()
