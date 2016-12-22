@@ -68,7 +68,7 @@ class Store(object):
 class Accounter(telepot.aio.helper.ChatHandler):
 
     fetch_bills_regex = re.compile(r"^@\w+$")  # /ihm @leplatrem
-    track_bill_regex = re.compile(r"^(\d+)\s+(\w+)$")  # /ihm 35 t-shit kidz
+    track_bill_regex = re.compile(r"^(\d+)\s+(.+)$")  # /ihm 35 t-shit kidz
     total_regex = re.compile(r"^total$")  # /ihm total
     reset_regex = re.compile(r"^reset$")  # /ihm reset
 
