@@ -68,7 +68,7 @@ class Store(object):
 class Accounter(telepot.aio.helper.ChatHandler):
 
     fetch_bills_regex = re.compile(r"^@\w+$")  # /ihm @leplatrem
-    track_bill_regex = re.compile(r"^(\d+)\s+(.+)$")  # /ihm 35 t-shit kidz
+    track_bill_regex = re.compile(r"^(?P<uid>@\w+)?\s*(?P<amount>\d+)\s+(?P<description>.+)$")  # /ihm 35 t-shit kidz
     total_regex = re.compile(r"^total$")  # /ihm total
     reset_regex = re.compile(r"^reset$")  # /ihm reset
 
@@ -97,8 +97,10 @@ class Accounter(telepot.aio.helper.ChatHandler):
 
         elif self.track_bill_regex.match(parameters):
             content = self.track_bill_regex.search(parameters)
-            amount, description = content.groups()
-            await self.track_bill(gid, uid, int(amount), description)
+            uid = content.group('uid')[1:] if content.group('uid') else uid
+            amount = int(content.group('amount'))
+            description = content.group('description')
+            await self.track_bill(gid, uid, amount, description)
 
         elif self.total_regex.match(parameters):
             await self.total(gid)
@@ -109,6 +111,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
         else:
             message = ("😳?\n"
                        "• /ihm 42 cheese: track bill\n"
+                       "• /ihm @username 42 cheese: track someone bill\n"
                        "• /ihm @username: fetch someone's bills\n"
                        "• /ihm total: current debts\n"
                        "• /ihm reset: clear bills\n")
