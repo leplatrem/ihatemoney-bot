@@ -50,13 +50,12 @@ class Store(object):
                 total += bill['amount']
             return [('World', participants[0], total)]
 
-        nb_others = len(participants) - 1
+        nb_others = len(participants)
         for bill in self.accounts[gid]:
-            lend = Decimal(bill['amount'])
-            debt = lend / nb_others
-            for participant in balance.keys():
+            debt = Decimal(bill['amount']) / nb_others
+            for participant in participants:
                 if participant == bill['uid']:
-                    balance[participant] += lend
+                    balance[participant] += debt
                 else:
                     balance[participant] -= debt
         return peinard.heuristic(balance)
@@ -81,7 +80,13 @@ class Accounter(telepot.aio.helper.ChatHandler):
         if content_type != 'text':
             return
 
-        uid = msg['from']['username']
+        try:
+            uid = msg['from']['username']
+        except KeyError:
+            message = "I need you to have a Telegram username!"
+            await self.sender.sendMessage(message)
+            pass
+
         gid = str(msg['chat']['id'])
         cmd = msg['text'].split(' ', 1)
         parameters = cmd[1] if len(cmd) > 1 else ''
@@ -144,19 +149,18 @@ class Accounter(telepot.aio.helper.ChatHandler):
         self.store.save()
         await self.sender.sendMessage("Bills cleared 👌")
 
+if __name__ == "__main__":
+    TOKEN = sys.argv[1]  # get token from command-line
 
+    store = Store()
+    store.load()
 
-TOKEN = sys.argv[1]  # get token from command-line
+    bot = telepot.aio.DelegatorBot(TOKEN, [
+        pave_event_space()(per_chat_id(types=['group']), create_open, Accounter, store, timeout=10)
+    ])
 
-store = Store()
-store.load()
+    loop = asyncio.get_event_loop()
+    loop.create_task(bot.message_loop())
+    print('Listening ...')
 
-bot = telepot.aio.DelegatorBot(TOKEN, [
-    pave_event_space()(per_chat_id(types=['group']), create_open, Accounter, store, timeout=10)
-])
-
-loop = asyncio.get_event_loop()
-loop.create_task(bot.message_loop())
-print('Listening ...')
-
-loop.run_forever()
+    loop.run_forever()
