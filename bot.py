@@ -43,7 +43,7 @@ class Store(object):
     def settle(self, gid):
         bills = self.accounts.get(gid, [])
         if not bills:
-            return []
+            return 0, set(), []
 
         balance = defaultdict(int)
         participants = set([bill['uid'] for bill in bills])
@@ -186,6 +186,8 @@ class Accounter(telepot.aio.helper.ChatHandler):
 
     async def settle(self, gid):
         total, participants, transactions = self.store.settle(gid)
+        if not participants:
+            return
         details = "\n".join([" • @{} → @{}: {}".format(*transaction)
                              for transaction in transactions])
         summary = "Total: {} 👉 {} each 🤑\n______________\n".format(total, round(total / len(participants)))
