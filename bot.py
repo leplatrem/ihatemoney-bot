@@ -1,12 +1,13 @@
 # coding: UTF-8
 import asyncio
 import datetime
+import decimal
 import json
 import re
 import sys
+from collections import defaultdict
 from decimal import Decimal
 
-import peinard
 import telepot
 from telepot.aio.delegate import per_chat_id, create_open, pave_event_space
 
@@ -17,7 +18,7 @@ class Store(object):
 
     def save(self):
         with open("accounts.json", "w") as f:
-            json.dump(self.accounts, f)
+            json.dump(self.accounts, f, indent=2)
 
     def load(self):
         try:
@@ -27,38 +28,84 @@ class Store(object):
             pass
 
     def fetch(self, gid, uid):
-        return [bill for bill in self.accounts.get(gid, [])
-                if bill['uid'] == uid]
+        bills = [bill for bill in self.accounts.get(gid, [])
+                 if bill['uid'] == uid]
+        total = 0
+        for bill in bills:
+            total += bill['amount']
+        return total, bills
 
     def track(self, gid, uid, amount, description):
         today = datetime.date.today().isoformat()
         bill = dict(uid=uid, amount=amount, description=description, date=today)
         self.accounts.setdefault(gid, []).append(bill)
 
-    def resolve(self, gid):
-        balance = {}
-        for bill in self.accounts.get(gid, []):
-            balance[bill['uid']] = 0
-        participants = list(balance.keys())
-
-        if len(participants) == 0:
+    def settle(self, gid):
+        bills = self.accounts.get(gid, [])
+        if not bills:
             return []
 
+        balance = defaultdict(int)
+        participants = set([bill['uid'] for bill in bills])
         if len(participants) == 1:
-            total = 0
-            for bill in self.accounts[gid]:
-                total += bill['amount']
-            return [('World', participants[0], total)]
+            participants.add('World')
 
-        nb_others = len(participants)
-        for bill in self.accounts[gid]:
-            debt = Decimal(bill['amount']) / nb_others
+        total = 0
+        for bill in bills:
+            amount = decimal.Decimal(bill['amount'])
+            total += amount
+            share =  amount / len(participants)
             for participant in participants:
                 if participant == bill['uid']:
-                    balance[participant] += debt
+                    balance[participant] += share
                 else:
-                    balance[participant] -= debt
-        return peinard.heuristic(balance)
+                    balance[participant] -= share
+
+        credits = [{"uid": k, "balance": v} for k, v in balance.items() if v > 0]
+        debts = [{"uid": k, "balance": v} for k, v in balance.items() if v < 0]
+
+        def exactmatch(credit, debts):
+            """Recursively try and find subsets of 'debts' whose sum is equal to credit"""
+            if not debts:
+                return None
+            if debts[0]["balance"] > credit:
+                return exactmatch(credit, debts[1:])
+            elif debts[0]["balance"] == credit:
+                return [debts[0]]
+            else:
+                matches = exactmatch(credit - debts[0]["balance"], debts[1:])
+                if matches:
+                    matches.append(debts[0])
+                else:
+                    matches = exactmatch(credit, debts[1:])
+                return matches
+
+        transactions = []
+
+        # Try and find exact matches
+        for credit in credits:
+            matches = exactmatch(round(credit["balance"], 2), debts)
+            if matches:
+                for m in matches:
+                    transactions.append((m["uid"], credit["uid"], m["balance"]))
+                    debts.remove(m)
+                credits.remove(credit)
+
+        # Split any remaining debts & credits
+        while credits and debts:
+            credit = credits[0]
+            debt = debts[0]
+            if credit["balance"] > debt["balance"]:
+                value = abs(debt["balance"])
+                credit["balance"] -= debt["balance"]
+                del debts[0]
+            else:
+                value = credit["balance"]
+                debt["balance"] -= credit["balance"]
+                del credits[0]
+            transactions.append((debt["uid"], credit["uid"], round(value)))
+
+        return total, participants, transactions
 
     def clear(self, gid):
         self.accounts[gid] = []
@@ -68,7 +115,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
 
     fetch_bills_regex = re.compile(r"^@\w+$")  # /ihm @leplatrem
     track_bill_regex = re.compile(r"^(?P<uid>@\w+)?\s*(?P<amount>\d+)\s+(?P<description>.+)$")  # /ihm 35 t-shit kidz
-    total_regex = re.compile(r"^total$")  # /ihm total
+    settle_regex = re.compile(r"^settle$")  # /ihm settle
     reset_regex = re.compile(r"^reset$")  # /ihm reset
 
     def __init__(self, seed_tuple, store, **kwargs):
@@ -89,8 +136,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
 
         gid = str(msg['chat']['id'])
         cmd = msg['text'].split(' ', 1)
-        parameters = cmd[1] if len(cmd) > 1 else ''
-        parameters = parameters.strip()
+        parameters = cmd[1].strip() if len(cmd) > 1 else ''
 
         if cmd[0].strip() != "/ihm":
             return
@@ -107,8 +153,8 @@ class Accounter(telepot.aio.helper.ChatHandler):
             description = content.group('description')
             await self.track_bill(gid, uid, amount, description)
 
-        elif self.total_regex.match(parameters):
-            await self.total(gid)
+        elif self.settle_regex.match(parameters):
+            await self.settle(gid)
 
         elif self.reset_regex.match(parameters):
             await self.clear(gid)
@@ -118,36 +164,39 @@ class Accounter(telepot.aio.helper.ChatHandler):
                        "• /ihm 42 cheese: track bill\n"
                        "• /ihm @username 42 cheese: track someone bill\n"
                        "• /ihm @username: fetch someone's bills\n"
-                       "• /ihm total: current debts\n"
+                       "• /ihm settle: current debts\n"
                        "• /ihm reset: clear bills\n")
             await self.sender.sendMessage(message)
 
     async def fetch_bills(self, gid, uid):
-        bills = self.store.fetch(gid, uid)
+        total, bills = self.store.fetch(gid, uid)
         if len(bills) == 0:
             await self.sender.sendMessage("No bills found for {} 😕".format(uid))
             return
 
         message = "\n".join(["• {date}: {amount} ({description})".format(**bill)
                              for bill in bills])
+        message += "\n_______________\n💶 {}".format(total)
         await self.sender.sendMessage(message)
 
     async def track_bill(self, gid, uid, amount, description):
         self.store.track(gid, uid, amount, description)
         self.store.save()
-        await self.total(gid)
+        await self.sender.sendMessage("👍")
 
-    async def total(self, gid):
-        result = self.store.resolve(gid)
-        message = "\n".join([" • {} → {}: {}".format(*transaction)
-                             for transaction in result])
-        await self.sender.sendMessage("🤑\n" + message)
+    async def settle(self, gid):
+        total, participants, transactions = self.store.settle(gid)
+        details = "\n".join([" • @{} → @{}: {}".format(*transaction)
+                             for transaction in transactions])
+        summary = "Total: {} 👉 {} each 🤑\n______________\n".format(total, round(total / len(participants)))
+        await self.sender.sendMessage(summary + details)
 
     async def clear(self, gid):
-        await self.total(gid)
+        await self.settle(gid)
         self.store.clear(gid)
         self.store.save()
         await self.sender.sendMessage("Bills cleared 👌")
+
 
 if __name__ == "__main__":
     TOKEN = sys.argv[1]  # get token from command-line
