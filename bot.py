@@ -3,6 +3,7 @@ import asyncio
 import datetime
 import decimal
 import json
+import math
 import re
 import sys
 from collections import defaultdict
@@ -103,7 +104,7 @@ class Store(object):
                 value = credit["balance"]
                 debt["balance"] -= credit["balance"]
                 del credits[0]
-            transactions.append((debt["uid"], credit["uid"], round(value)))
+            transactions.append((debt["uid"], credit["uid"], math.ceil(value)))
 
         return total, participants, transactions
 
@@ -190,7 +191,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
             return
         details = "\n".join([" • @{} → @{}: {}".format(*transaction)
                              for transaction in transactions])
-        summary = "Total: {} 👉 {} each 🤑\n______________\n".format(total, round(total / len(participants)))
+        summary = "Total: {} 👉 {} each 🤑\n______________\n".format(total, math.ceil(total / len(participants)))
         await self.sender.sendMessage(summary + details)
 
     async def clear(self, gid):
