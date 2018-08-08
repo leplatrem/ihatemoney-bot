@@ -28,8 +28,20 @@ class Store(object):
         except IOError as e:
             pass
 
+    def set_persons(self, gid, uid, nb):
+        self.accounts.setdefault(gid, {}).setdefault("participants", {})[uid] = nb
+
+    def display(self, gid, uid):
+        nb_persons = self.accounts.get(gid, {}).get("participants", {})
+        nb = nb_persons.get(uid, 1)
+        if nb == 0:
+            uid += "👻"
+        elif nb > 1:
+            uid += "(%s👨‍👦‍👦)" % nb
+        return uid
+
     def fetch(self, gid, uid):
-        bills = [bill for bill in self.accounts.get(gid, [])
+        bills = [bill for bill in self.accounts.get(gid, {}).get("bills", [])
                  if bill['uid'] == uid]
         total = 0
         for bill in bills:
@@ -39,10 +51,10 @@ class Store(object):
     def track(self, gid, uid, amount, description):
         today = datetime.date.today().isoformat()
         bill = dict(uid=uid, amount=amount, description=description, date=today)
-        self.accounts.setdefault(gid, []).append(bill)
+        self.accounts.setdefault(gid, {}).setdefault("bills", []).append(bill)
 
     def settle(self, gid):
-        bills = self.accounts.get(gid, [])
+        bills = self.accounts.get(gid, {}).get("bills", [])
         if not bills:
             return 0, set(), []
 
@@ -51,12 +63,17 @@ class Store(object):
         if len(participants) == 1:
             participants.add('World')
 
+        nb_persons = self.accounts.get(gid, {}).get("participants", {})
+        total_persons = sum([nb_persons.get(p, 1) for p in participants])
+
         total = 0
         for bill in bills:
             amount = decimal.Decimal(bill['amount'])
             total += amount
-            share =  amount / len(participants)
+
             for participant in participants:
+                nb = nb_persons.get(participant, 1)
+                share =  amount * nb / total_persons
                 if participant == bill['uid']:
                     balance[participant] += share
                 else:
@@ -88,7 +105,7 @@ class Store(object):
             matches = exactmatch(round(credit["balance"], 2), debts)
             if matches:
                 for m in matches:
-                    transactions.append((m["uid"], credit["uid"], m["balance"]))
+                    transactions.append((self.display(gid, m["uid"]), self.display(gid, credit["uid"]), m["balance"]))
                     debts.remove(m)
                 credits.remove(credit)
 
@@ -104,16 +121,17 @@ class Store(object):
                 value = credit["balance"]
                 debt["balance"] -= credit["balance"]
                 del credits[0]
-            transactions.append((debt["uid"], credit["uid"], math.ceil(value)))
+            transactions.append((self.display(gid, debt["uid"]), self.display(gid, credit["uid"]), math.ceil(value)))
 
-        return total, participants, transactions
+        return total, total_persons, transactions
 
     def clear(self, gid):
-        self.accounts[gid] = []
+        self.accounts.setdefault(gid, {})["bills"] = []
 
 
 class Accounter(telepot.aio.helper.ChatHandler):
 
+    persons_regex = re.compile(r"^(?P<uid>@\w+)?\s*(?P<nb>\d+) persons$")  # /ihm @leplatrem 3 persons
     fetch_bills_regex = re.compile(r"^@\w+$")  # /ihm @leplatrem
     track_bill_regex = re.compile(r"^(?P<uid>@\w+)?\s*(?P<amount>\d+(\.\d+)?)\s+(?P<description>.+)$")  # /ihm 35.3 t-shit kidz
     settle_regex = re.compile(r"^settle$")  # /ihm settle
@@ -147,10 +165,16 @@ class Accounter(telepot.aio.helper.ChatHandler):
         if self.fetch_bills_regex.match(parameters):
             await self.fetch_bills(gid, parameters[1:])
 
+        elif self.persons_regex.match(parameters):
+            content = self.persons_regex.search(parameters)
+            uid = content.group('uid')[1:] if content.group('uid') else uid
+            nb = int(content.group('nb'))
+            await self.set_persons(gid, uid, nb)
+
         elif self.track_bill_regex.match(parameters):
             content = self.track_bill_regex.search(parameters)
             uid = content.group('uid')[1:] if content.group('uid') else uid
-            amount = int(content.group('amount'))
+            amount = float(content.group('amount'))
             description = content.group('description')
             await self.track_bill(gid, uid, amount, description)
 
@@ -165,9 +189,15 @@ class Accounter(telepot.aio.helper.ChatHandler):
                        "• /ihm 42 cheese: track bill\n"
                        "• /ihm @username 42 cheese: track someone bill\n"
                        "• /ihm @username: fetch someone's bills\n"
+                       "• /ihm @username 2 persons: pay for a group\n"
                        "• /ihm settle: current debts\n"
                        "• /ihm reset: clear bills\n")
             await self.sender.sendMessage(message)
+
+    async def set_persons(self, gid, uid, nb):
+        self.store.set_persons(gid, uid, nb)
+        self.store.save()
+        await self.sender.sendMessage("👍")
 
     async def fetch_bills(self, gid, uid):
         total, bills = self.store.fetch(gid, uid)
@@ -186,12 +216,12 @@ class Accounter(telepot.aio.helper.ChatHandler):
         await self.sender.sendMessage("👍")
 
     async def settle(self, gid):
-        total, participants, transactions = self.store.settle(gid)
-        if not participants:
+        total, total_persons, transactions = self.store.settle(gid)
+        if not total_persons:
             return
         details = "\n".join([" • @{} → @{}: {}".format(*transaction)
                              for transaction in transactions])
-        summary = "Total: {} 👉 {} each 🤑\n______________\n".format(total, math.ceil(total / len(participants)))
+        summary = "Total: {} 👉 {} each 🤑\n______________\n".format(total, math.ceil(total / total_persons))
         await self.sender.sendMessage(summary + details)
 
     async def clear(self, gid):
