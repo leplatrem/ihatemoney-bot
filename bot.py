@@ -221,7 +221,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
             return
         details = "\n".join([" • @{} → @{}: {}".format(*transaction)
                              for transaction in transactions])
-        summary = "Total: {} 👉 {} each 🤑\n______________\n".format(total, math.ceil(total / total_persons))
+        summary = "Total: {:0.2f} 👉 {} each 🤑\n______________\n".format(total, math.ceil(total / total_persons))
         await self.sender.sendMessage(summary + details)
 
     async def clear(self, gid):
