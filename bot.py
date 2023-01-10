@@ -186,6 +186,11 @@ class Accounter(telepot.aio.helper.ChatHandler):
             else:
                 amount = float(content.group('amount'))
                 description = content.group('description')
+                # If username was put in description, be indulgent and parse it.
+                username = re.search(r'@\w+', description or "")
+                if username:
+                    uid = username.group()
+                    description = description.replace(uid, "")
                 await self.track_bill(gid, msg_id, uid, amount, description)
 
         elif self.settle_regex.match(parameters):
