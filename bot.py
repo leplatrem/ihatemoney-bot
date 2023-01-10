@@ -52,6 +52,8 @@ class Store(object):
         today = datetime.date.today().isoformat()
         bill = dict(uid=uid, amount=amount, description=description, date=today)
         self.accounts.setdefault(gid, {}).setdefault("bills", []).append(bill)
+        total = sum([b["amount"] for b in self.accounts[gid]["bills"]])
+        return total
 
     def settle(self, gid):
         bills = self.accounts.get(gid, {}).get("bills", [])
@@ -219,9 +221,9 @@ class Accounter(telepot.aio.helper.ChatHandler):
         await self.sender.sendMessage(message)
 
     async def track_bill(self, gid, uid, amount, description):
-        self.store.track(gid, uid, amount, description)
+        total = self.store.track(gid, uid, amount, description)
         self.store.save()
-        await self.sender.sendMessage("👍")
+        await self.sender.sendMessage("👍 Total: {:0.2f}".format(total))
 
     async def settle(self, gid):
         total, total_persons, transactions = self.store.settle(gid)
