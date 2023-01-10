@@ -202,7 +202,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
                        "• `/ihm @username 2 persons`: pay for a group\n"
                        "• `/ihm settle`: current debts\n"
                        "• `/ihm reset`: clear bills\n")
-            await self.sender.sendMessage(message)
+            await self.sender.sendMessage(message, parse_mode="Markdown")
 
     async def set_persons(self, gid, uid, nb):
         self.store.set_persons(gid, uid, nb)
