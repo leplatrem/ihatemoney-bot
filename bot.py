@@ -146,19 +146,17 @@ class Accounter(telepot.aio.helper.ChatHandler):
         if content_type != 'text':
             return
 
-        try:
-            uid = msg['from']['username']
-        except KeyError:
-            message = "I need you to have a Telegram username!"
-            await self.sender.sendMessage(message)
-            pass
-
         gid = str(msg['chat']['id'])
         cmd = msg['text'].split(' ', 1)
         parameters = cmd[1].strip() if len(cmd) > 1 else ''
 
         if cmd[0].strip() != "/ihm":
             return
+
+        try:
+            uid = msg['from']['username']
+        except KeyError:
+            uid = None
 
         print(gid, uid, parameters)
 
@@ -167,16 +165,26 @@ class Accounter(telepot.aio.helper.ChatHandler):
 
         elif self.persons_regex.match(parameters):
             content = self.persons_regex.search(parameters)
-            uid = content.group('uid')[1:] if content.group('uid') else uid
-            nb = int(content.group('nb'))
-            await self.set_persons(gid, uid, nb)
+            if content.group('uid'):
+                uid = content.group('uid')[1:]
+            if uid is None:
+                message = "I need you to have a Telegram username!"
+                await self.sender.sendMessage(message)
+            else:
+                nb = int(content.group('nb'))
+                await self.set_persons(gid, uid, nb)
 
         elif self.track_bill_regex.match(parameters):
             content = self.track_bill_regex.search(parameters)
-            uid = content.group('uid')[1:] if content.group('uid') else uid
-            amount = float(content.group('amount'))
-            description = content.group('description')
-            await self.track_bill(gid, uid, amount, description)
+            if content.group('uid'):
+                uid = content.group('uid')[1:]
+            if uid is None:
+                message = "I need you to have a Telegram username!"
+                await self.sender.sendMessage(message)
+            else:
+                amount = float(content.group('amount'))
+                description = content.group('description')
+                await self.track_bill(gid, uid, amount, description)
 
         elif self.settle_regex.match(parameters):
             await self.settle(gid)
