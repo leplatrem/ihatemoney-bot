@@ -144,7 +144,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
         self.store = store
 
     async def on_chat_message(self, msg):
-        content_type, chat_type, chat_id = telepot.glance(msg)
+        content_type, chat_type, chat_id, msg_date, msg_id = telepot.glance(msg, long=True)
         if content_type != 'text':
             return
 
@@ -186,7 +186,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
             else:
                 amount = float(content.group('amount'))
                 description = content.group('description')
-                await self.track_bill(gid, uid, amount, description)
+                await self.track_bill(gid, msg_id, uid, amount, description)
 
         elif self.settle_regex.match(parameters):
             await self.settle(gid)
@@ -220,10 +220,10 @@ class Accounter(telepot.aio.helper.ChatHandler):
         message += "\n_______________\n💶 {}".format(total)
         await self.sender.sendMessage(message)
 
-    async def track_bill(self, gid, uid, amount, description):
+    async def track_bill(self, gid, msg_id, uid, amount, description):
         total = self.store.track(gid, uid, amount, description)
         self.store.save()
-        await self.sender.sendMessage("👍 Total: {:0.2f}".format(total))
+        await self.sender.sendMessage("👍 Total: {:0.2f}".format(total), reply_to_message_id=msg_id)
 
     async def settle(self, gid):
         total, total_persons, transactions = self.store.settle(gid)
