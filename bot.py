@@ -194,12 +194,12 @@ class Accounter(telepot.aio.helper.ChatHandler):
 
         else:
             message = ("😳?\n"
-                       "• /ihm 42 cheese: track bill\n"
-                       "• /ihm @username 42 cheese: track someone bill\n"
-                       "• /ihm @username: fetch someone's bills\n"
-                       "• /ihm @username 2 persons: pay for a group\n"
-                       "• /ihm settle: current debts\n"
-                       "• /ihm reset: clear bills\n")
+                       "• `/ihm 42 cheese`: track bill\n"
+                       "• `/ihm @username 42 cheese`: track someone bill\n"
+                       "• `/ihm @username`: fetch someone's bills\n"
+                       "• `/ihm @username 2 persons`: pay for a group\n"
+                       "• `/ihm settle`: current debts\n"
+                       "• `/ihm reset`: clear bills\n")
             await self.sender.sendMessage(message)
 
     async def set_persons(self, gid, uid, nb):
