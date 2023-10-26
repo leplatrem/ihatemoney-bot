@@ -31,6 +31,9 @@ class Store(object):
     def set_persons(self, gid, uid, nb):
         self.accounts.setdefault(gid, {}).setdefault("participants", {})[uid] = nb
 
+    def list_persons(self, gid):
+        return list(self.accounts.get(gid, {}).get("participants", {}).keys())
+
     def display(self, gid, uid):
         nb_persons = self.accounts.get(gid, {}).get("participants", {})
         nb = nb_persons.get(uid, 1)
@@ -137,6 +140,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
     fetch_bills_regex = re.compile(r"^@\w+$")  # /ihm @leplatrem
     track_bill_regex = re.compile(r"^(?P<uid>@\w+)?\s*(?P<amount>\d+(\.\d+)?)\s+(?P<description>.+)$")  # /ihm 35.3 t-shit kidz
     settle_regex = re.compile(r"^settle$")  # /ihm settle
+    status_regex = re.compile(r"^status$")  # /ihm settle
     reset_regex = re.compile(r"^reset$")  # /ihm reset
 
     def __init__(self, seed_tuple, store, **kwargs):
@@ -196,6 +200,9 @@ class Accounter(telepot.aio.helper.ChatHandler):
         elif self.settle_regex.match(parameters):
             await self.settle(gid)
 
+        elif self.status_regex.match(parameters):
+            await self.status(gid)
+
         elif self.reset_regex.match(parameters):
             await self.clear(gid)
 
@@ -206,6 +213,7 @@ class Accounter(telepot.aio.helper.ChatHandler):
                        "• `/ihm @username`: show someone's bills\n"
                        "• `/ihm @username 2 persons`: someone pays for a group\n"
                        "• `/ihm settle`: show current debts\n"
+                       "• `/ihm status`: show full report\n"
                        "• `/ihm reset`: clear bills\n")
             await self.sender.sendMessage(message, parse_mode="Markdown", reply_to_message_id=msg_id)
 
@@ -238,6 +246,12 @@ class Accounter(telepot.aio.helper.ChatHandler):
                              for transaction in transactions])
         summary = "Total: {:0.2f} 👉 {} each 🤑\n______________\n".format(total, math.ceil(total / total_persons))
         await self.sender.sendMessage(summary + details)
+
+    async def status(self, gid):
+        uids = self.store.list_persons(gid)
+        for uid in uids:
+            await self.fetch_bills(gid, uid)
+        await self.settle(gid)
 
     async def clear(self, gid):
         await self.settle(gid)
